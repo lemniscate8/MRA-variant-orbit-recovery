@@ -1,2 +1,2 @@
 # MRA-variant-orbit-recovery
-Tests for MRA variant orbit recovery algorithms
+Validation for MRA variant orbit recovery algorithms
