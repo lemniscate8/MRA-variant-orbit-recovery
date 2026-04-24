@@ -6,6 +6,7 @@ from MRA_helpers import *
 import polynomials as poly
 import recovery_helpers as rh
 import pandas as pd
+from scipy.special import comb
 
 
 def construct_nullspace(even_coefs, lut_method):
@@ -27,7 +28,6 @@ def construct_psuedoinverse(even_coefs, row_lut):
     dim = even_coefs.size
     num_rows = (dim + 1) * dim // 2
     num_cols = max(row_lut.values()) + 1
-    # print("Max cols:", num_cols)
     arr = sparse.dok_array((num_rows, num_cols), dtype=even_coefs.dtype)
     for row_index, row_tuple in enumerate(
         it.combinations_with_replacement(range(dim), 2)
@@ -40,19 +40,15 @@ def construct_psuedoinverse(even_coefs, row_lut):
             sorted([(-2 * j - 1) % (2 * dim), (-2 * k - 1) % (2 * dim), 2 * ell2])
         )
         col_ind1 = row_lut.get(t1, -1)
-        col_ind2 = row_lut.get(t1, -1)
+        col_ind2 = row_lut.get(t2, -1)
         if (col_ind1 == -1) or (col_ind2 == -1):
             continue
         if col_ind1 == col_ind2:
-            val = even_coefs[ell1].conjugate() / (np.abs(even_coefs[ell1]) ** 2)
+            val = even_coefs[ell1].conj() / (np.abs(even_coefs[ell1]) ** 2)
         else:
-            val = even_coefs[ell1].conjugate() / (
+            val = even_coefs[ell1].conj() / (
                 np.abs(even_coefs[ell1]) ** 2 + np.abs(even_coefs[ell2]) ** 2
             )
-        # Correct normalization in our strange weighting
-        # if j != k:
-        #     val *= np.sqrt(2)
-        # print(j, k, t1, t2, ell1, ell2)
         arr[row_index, col_ind1] = val
         arr[row_index, col_ind2] = val
     csr_array = sparse.csr_array(arr)
@@ -61,31 +57,14 @@ def construct_psuedoinverse(even_coefs, row_lut):
 
 
 # Alternative method of constructing the M-matrix (plus one additional column)
-# using our symmetric lift utility (see unit_tests where we validate this is
-# the same)
+# using our symmetric lift utility (see unit_tests where we validate this
+# produces the same matrix)
 def construct_M_matrix_alt(coef, col_map_method):
     null = construct_nullspace(coef[::2], col_map_method)
     odd_rank1 = poly.symmetric_lift(coef[1::2, None], 2)
     null_extend = sparse.hstack([odd_rank1, null], format="dok", dtype=null.dtype)
     lifted = poly.symmetric_lift(null_extend, 2)
     return poly.sym_matrix_minors_subspace(len(coef) // 2) @ lifted
-
-
-# def kernel_recovery_matrix(coef, col_map_method):
-#     null = construct_nullspace(coef[::2], col_map_method)
-#     null_csr = sparse.csr_array(null)
-#     null_csr /= splg.norm(null_csr, axis=0)
-#     odd_rank1 = poly.symmetric_lift(coef[1::2, None])
-#     part_sol = odd_rank1 - null_csr @ (null_csr.conjugate().T @ odd_rank1)
-#     part_sol /= np.linalg.norm(part_sol)
-#     # sol_lift = symmetric_lift(part_sol[:, None])
-#     # print(odd_lift.shape)
-#     # odd_lift /= odd_lift / np.linalg.norm(odd_lift, axis=0)
-#     null_extend = sparse.hstack([part_sol, null_csr], format="dok", dtype=null.dtype)
-#     lifted = poly.symmetric_lift(null_extend)
-#     lifted_csr = sparse.csr_array(lifted)
-#     minors = poly.sym_matrix_minors_subspace(len(coef) // 2)
-#     return minors @ lifted_csr
 
 
 # Analog of the M-matrix except solution is the top singular vector
@@ -110,7 +89,8 @@ def singular_vector_recovery_matrix(coefs, col_map_method):
     return (anti_minors.transpose() @ lifted_csr), null_extend, part_sol_norm
 
 
-def get_particular_dMRA_solution(even_coefs, invars, invar_inds):
+# Subroutine to extract a particular solution in either the dMRA or pMRA case
+def get_particular_solution(even_coefs, invars, invar_inds):
     row_lut = {}
     for ind, row in enumerate(invar_inds):
         row_lut[tuple(row)] = ind
@@ -119,164 +99,171 @@ def get_particular_dMRA_solution(even_coefs, invars, invar_inds):
     return proj
 
 
-# def is_close_orthonormal(arr):
-#     gram = arr.conj().T @ arr
-#     gram_vec = gram.toarray().flatten()
-#     Ivec = np.identity(gram.shape[0]).flatten()
-#     print("Is orthonormal? ", np.allclose(gram_vec, Ivec))
-
-
-def dMRA_recover_odd_coefs(even_coefs, invars, invar_inds, verbose=False):
+# Subroutine that recovers odd Fourier coefficients from the even ones and
+# 3rd order dMRA invariants or pMRA invariants
+def recover_odd_coefs(even_coefs, invars, invar_inds, verbose=False):
     dim = even_coefs.size
-    proj = get_particular_dMRA_solution(even_coefs, invars, invar_inds)
-    proj_mag = np.linalg.norm(proj)
-    proj /= proj_mag
+    if verbose:
+        print("Recovering odd coefficients at dimension ", 2 * dim)
+    x_p = get_particular_solution(even_coefs, invars, invar_inds)
+    x_p_norm = np.linalg.norm(x_p)
+    x_p /= x_p_norm
     null = construct_nullspace(even_coefs, dMRA_nullspace_col_lut)
     null /= splg.norm(null, axis=0)
-    ortho_basis = sparse.hstack((proj[:, None], null), format="csr")
+    ortho_basis = sparse.hstack((x_p[:, None], null), format="csr")
     rec_mat, _, w_right = rh.top_vector_recovery_matrix_for(ortho_basis)
     _, s, vh = splg.svds(rec_mat, k=2, return_singular_vectors="vh", tol=0)
     if verbose:
         print("Top two singular values: ", s)
     weight_vec = vh[1, :].conj() / w_right
     weights, eigvals1 = rh.round_sym_to_rank1(weight_vec, ortho_basis.shape[1])
-    print(np.abs(eigvals1))
-    normalized_weights = weights * proj_mag / weights[0]
+    if verbose:
+        num_vecs = min(eigvals1.size, 5)
+        abs_vals1 = np.abs(eigvals1)
+        sel = np.argpartition(abs_vals1, -num_vecs)[(-num_vecs):]
+        print(sel)
+        print(
+            "Singular vector-as-matrix eigenvalues (largest 5):\n",
+            np.abs(eigvals1[sel]),
+        )
+    normalized_weights = (weights / weights[0]) * x_p_norm
     odd_lift = ortho_basis @ normalized_weights
     odd_coefs, eigvals2 = rh.round_sym_to_rank1(odd_lift, dim)
-    print(np.abs(eigvals2))
+    if verbose:
+        num_vecs = min(eigvals1.size - 1, 5)
+        abs_vals2 = np.abs(eigvals1)
+        sel = np.argpartition(abs_vals2, -num_vecs)[(-num_vecs):]
+        print(sel)
+        print("Planted matrix eigenvalues (largest 5):\n", eigvals2[sel])
     return odd_coefs
 
 
-# def test_normalizations(dim, rng):
-#     vec = rng.normal(size=dim)
-#     vec /= np.linalg.norm(vec)
-#     vlift = symmetric_lift(vec[:, None], normalize=True)
-#     print("1st lift norm:", np.linalg.norm(vlift))
-#     vlift2 = symmetric_lift(vlift, normalize=True)
-#     print("2nd lift  norm:", np.linalg.norm(vlift))
-#     anti_minors = construct_anti_minors_matrix(dim, normalize=True)
-#     extent = anti_minors.transpose() @ vlift2
-#     print("extent norm:", np.linalg.norm(extent))
-
-
-def computed_dMRA_moment(fourier_signal, k, condition=None):
-    pass
-
-
-def theoretic_dMRA_invariants(fourier_signal, k, condition=None):
+# A method that computes the dMRA invariants in the fourier basis
+def theoretic_dMRA_invariants(fourier_signal, k):
     d = fourier_signal.size
-    indices = dMRA_tensor_index_array(d, k, condition)
+    indices = dMRA_tensor_index_array(d, k)
     return np.real(np.prod(fourier_signal[indices], axis=1)), indices
 
 
-def computed_pMRA_moment(fourier_signal, k, condition=None):
+# def theoretic_pMRA_invariants(fourier_signal, k):
+#     d = fourier_signal.size
+#     cond = (
+#         None if (d % 2 == 1) else lambda tup: not np.any([val == d // 2 for val in tup])
+#     )
+#     indices = dMRA_tensor_index_array(d, k, cond)
+#     return np.real(np.prod(fourier_signal[indices], axis=1)), indices
+
+
+# def computed_nonzero_dMRA_invariants(dim, k, moment):
+#     select = np.fromiter(
+#         map(
+#             lambda tup: np.sum(tup) % dim == 0,
+#             it.combinations_with_replacement(range(dim), k),
+#         ),
+#         dtype=bool,
+#     )
+#     return moment[select], dMRA_tensor_index_array(dim, k)
+
+
+# Computes the pMRA moment tensor in a compressed format and in the Fourier
+# basis
+def computed_pMRA_moment(real_signal, k):
+    dim = real_signal.size
+    moment = np.zeros(comb(dim + k - 1, k, exact=True), dtype=complex)
+    for ell in range(dim):
+        rolled = np.roll(real_signal, ell)
+        sym_proj = rolled + np.flip(rolled)
+        fproj = np.fft.fft(sym_proj)
+        moment += np.squeeze(poly.symmetric_lift(fproj[:, None], k))
+    moment /= dim
+    return moment
+
+
+def extract_dMRA_invars_from_pMRA(dim, pMRA_moment):
     pass
 
 
-def extract_dMRA_invars_from_pMRA(pMRA_invars, indices):
-    pass
+def recursive_recover(dim, invars, invar_inds, base_case_method, verbose=False):
+    print("Entering level ", dim)
+    even_coefs = np.zeros(dim // 2, dtype=complex)
+    if dim > 8:
+        sel = np.all((invar_inds % 2) == 0, axis=1)
+        even_invars = invars[sel]
+        print(even_invars.size)
+        even_invar_inds = invar_inds[sel, :] // 2
+        even_coefs[:] = recursive_recover(
+            dim // 2, even_invars, even_invar_inds, base_case_method, verbose=verbose
+        )
+    else:
+        if verbose:
+            print(
+                "At dimension {} using base case method '{}'".format(
+                    dim, base_case_method.__name__
+                )
+            )
+        even_coefs[:] = base_case_method(invars)
+
+    if verbose:
+        # for row in invar_inds:
+        #     print(row)
+        pass
+    odd_coefs = recover_odd_coefs(even_coefs, invars, invar_inds, verbose=verbose)
+    all_coefs = np.zeros(dim, dtype=complex)
+    all_coefs[::2] = even_coefs
+    all_coefs[1::2] = odd_coefs
+    return all_coefs
 
 
-# def practice_noiseless_dMRA_invariants(fourier_signal, k):
-#     for
+def cyclic_fdistance(f_signal1, f_signal2):
+    dim = f_signal1.size
+    steps = np.arange(dim)
+    outer = np.outer(steps, steps)
+    phases = np.exp(-2j * np.pi * outer / dim)
+    shifted = phases * f_signal1[None, :]
+    diffs = shifted - f_signal2[None, :]
+    return np.min(np.linalg.norm(diffs, axis=1))
 
 
-def noiseless_pMRA_invariants(signal, k):
-    pass
-
-
-# def colspan_A_dMRA(even_coefs, invariant_lut):
-#     d = even_coefs.size
-
-#     for j,k in it.combinations_with_replacement(range(d)):
-
-
-# def colspan_A_pMRA(dim):
-#     pass
-
-
-def compare_dMRA_projections(coef, invars, invar_inds):
-    null = construct_nullspace(coef[::2], dMRA_nullspace_col_lut)
-    null /= splg.norm(null, axis=0)
-    odd_lift = poly.symmetric_lift(coef[1::2, None], 2)
-    part_sol1 = odd_lift - null @ (null.conjugate().T @ odd_lift)
-    part_sol2 = get_particular_dMRA_solution(coef[::2], invars, invar_inds)
-    return np.squeeze(part_sol1), np.squeeze(part_sol2)
+def dihedral_fdistance(f_signal1, f_signal2):
+    cyc_dist = cyclic_fdistance(f_signal1, f_signal2)
+    f_signal2_rev = np.flip(np.roll(f_signal2, -1))
+    cyc_dist_rev = cyclic_fdistance(f_signal1, f_signal2_rev)
+    return min(cyc_dist, cyc_dist_rev)
 
 
 if __name__ == "__main__":
-    rng = np.random.default_rng()
-    dim = 8
-    real_signal = rng.normal(size=(dim))
-    signal = np.fft.fft(real_signal)
-    invars, invar_inds = theoretic_dMRA_invariants(signal, 3)
-    odd_coefs = dMRA_recover_odd_coefs(signal[::2], invars, invar_inds, verbose=True)
-    true_odd = signal[1::2]
-    ratio = odd_coefs / true_odd
-    print(np.abs(ratio))
 
-    # print(signal[1::2])
-    # print(odd_coefs)
-    # print(signal[1::2] / odd_coefs)
-    # cheesed_recovery(signal, dMRA_nullspace_col_lut)
+    inital_coefs = np.loadtxt("input/initialization.csv", dtype=complex, delimiter=",")
 
-    # p1, p2 = compare_dMRA_projections(signal, invars, invar_inds)
-    # print(p1 / p2)
-    # print(np.allclose(p1 / p2, 1))
+    # Return the first four Fourier coefficients as the base case
+    def oracle_base_case(invars):
+        return inital_coefs
 
-    # arr = dMRA_tensor_index_array(
-    #     dim,
-    #     3,
-    #     condition=(lambda inds: np.sum((ind % 2 for ind in inds)) == 2),
-    # )
-    # print(arr.shape)
-    # print(arr)
+    # Assume that the dimension is 64
+    signal_dim = 64
+    tensor_inds = np.fromiter(
+        it.combinations_with_replacement(range(signal_dim), 3),
+        dtype=(np.uint, 3),
+        count=comb(signal_dim + 3 - 1, 3, exact=True),
+    )
+    dMRA_moment = np.loadtxt("input/dMRA_3rd_moment.csv", dtype=complex, delimiter=",")
+    # Compress the invariants by omitting the values assumed to be zero
+    sel = (np.sum(tensor_inds, axis=1) % signal_dim) == 0
+    nonzero_dMRA_invars = dMRA_moment[sel]
+    invar_inds = tensor_inds[sel, :]
+    print(invar_inds)
 
-    # ----- Kernel method works -----
-    # mat = kernel_recovery_matrix(signal, dMRA_nullspace_col_lut)
-    # print(mat.shape)
-    # print(np.linalg.matrix_rank(mat.toarray()))
+    # Run the recovery algorithm for the dMRA invariants
+    recovered_signal_dMRA = recursive_recover(
+        signal_dim, nonzero_dMRA_invars, invar_inds, oracle_base_case, verbose=True
+    )
 
-    # ----- Singular value method -----
-    # sp_arr, lift, null_extend = singular_vector_recovery_matrix(
-    #     signal, dMRA_nullspace_col_lut
-    # )
+    # pMRA_moment = np.loadtxt("input/pMRA_3rd_moment.csv", dtype=complex, delimiter=",")
 
-    # signal[dim // 2] = 1
-    # sp_arr, lift, null_extend = singular_vector_recovery_matrix(
-    #     signal, pMRA_nullspace_col_lut
-    # )
-    # print("Shape:", sp_arr.shape)
-    # print("Footprint:", np.prod(sp_arr.shape))
-    # print("Non-zero entries:", sp_arr.nnz)
-
-    # num_vals = 3
-    # _, s, vh = splg.svds(sp_arr, k=num_vals, return_singular_vectors="vh", tol=0)
-    # # s = np.linalg.svdvals(sp_arr.toarray())
-    # order = np.argsort(-np.abs(s))
-    # print("Vals:", s[order][0:num_vals])
-    # print("Angles:", 180 * np.acos(np.clip(s[order][0:num_vals], 0, 1)) / np.pi)
-
-    # arr = sp_arr.toarray()
-    # svd_vals = np.linalg.svdvals(arr)
-    # print("Vals:", svd_vals[:10])
-    # print("Angles:", 180 * np.arccos(np.clip(svd_vals[:10], -1, 1)) / np.pi)
-
-    # test_normalizations(dim, rng)
-
-    # eye = sparse.dok_array(lift.conjugate().T @ lift)
-    # eye.eliminate_zeros()
-    # print(eye)
-    # arr = (lift.conj().T @ lift).toarray()
-    # np.savetxt("test.csv", np.abs(arr), fmt="%.3f")
-
-    # minors = construct_minors_matrix(dim)
-    # anti_minors = construct_anti_minors_matrix(dim, normalize=True)
-    # prod = minors @ anti_minors
-    # norm = splg.norm(prod, ord="fro")
-    # print(norm)
-    # print(arr)
-
-    # mat = construct_anti_minors_matrix(4, normalize=True)
-    # np.savetxt("test.csv", mat.toarray(), fmt="%.1f")
+    # Check how close our recovery is to the true signal
+    true_fourier = np.loadtxt(
+        "solution/true_fourier_coefficients.csv", dtype=complex, delimiter=","
+    )
+    dist_dMRA = dihedral_fdistance(true_fourier, recovered_signal_dMRA)
+    print("Recovery dihedral-invariant distance from 3rd dMRA moment:", dist_dMRA)
+    ratio = true_fourier / recovered_signal_dMRA

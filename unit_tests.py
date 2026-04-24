@@ -4,8 +4,10 @@ import scipy.sparse.linalg as splg
 import MRA_helpers
 import polynomials as poly
 import recursive_recovery as rr
+import recovery_helpers as rec_help
 import M_matrix_validation as mmv
-import warnings
+
+# import warnings
 
 
 class TestIntersect(unittest.TestCase):
@@ -14,7 +16,7 @@ class TestIntersect(unittest.TestCase):
         self.unitary_test_set = [[3, 2, 2], [10, 6, 2], [4, 4, 2], [3, 2, 3]]
         self.plant_test_dims = [3, 6, 10]
         self.minors_test_dims = np.arange(2, 10, dtype=int)
-        self.M_matrix_test_dims = [8]
+        self.M_matrix_test_dims = [8, 16, 32]
 
     def generate_orthonormal_matrix(self, m, n):
         A = self.rng.normal(size=(m, n))
@@ -127,14 +129,14 @@ class TestIntersect(unittest.TestCase):
             gap = np.max(s) - np.min(s)
             self.assertGreaterEqual(gap, 0, "Trivial gap.")
             weights_vec = vh[max_ind, :] / w_right
-            weights, eigvals = rr.round_sym_to_rank1(weights_vec, U_dim + 1)
+            weights, eigvals = rec_help.round_sym_to_rank1(weights_vec, U_dim + 1)
             eig_mags1 = np.sort(np.abs(eigvals))
             self.assertTrue(
                 np.allclose(eig_mags1[:-1], 0),
                 msg="Weights vector is not close to rank-1.",
             )
             recovered = U @ weights
-            signal_est, eigvals2 = rr.round_sym_to_rank1(recovered, dim)
+            signal_est, eigvals2 = rec_help.round_sym_to_rank1(recovered, dim)
             eig_mags2 = np.sort(np.abs(eigvals2))
             self.assertTrue(
                 np.allclose(eig_mags2[:-1], 0),
@@ -179,14 +181,14 @@ class TestIntersect(unittest.TestCase):
             gap = np.max(s) - np.min(s)
             self.assertGreaterEqual(gap, 0, "Trivial gap.")
             weights_vec = vh[max_ind, :].conj() / w_right
-            weights, eigvals = rr.round_sym_to_rank1(weights_vec, U_dim + 1)
+            weights, eigvals = rec_help.round_sym_to_rank1(weights_vec, U_dim + 1)
             eig_mags1 = np.sort(np.abs(eigvals))
             self.assertTrue(
                 np.allclose(eig_mags1[:-1], 0),
                 msg="Weights vector is not close to rank-1.",
             )
             recovered = U @ weights
-            signal_est, eigvals2 = rr.round_sym_to_rank1(recovered, dim)
+            signal_est, eigvals2 = rec_help.round_sym_to_rank1(recovered, dim)
             eig_mags2 = np.sort(np.abs(eigvals2))
             self.assertTrue(
                 np.allclose(eig_mags2[:-1], 0),
@@ -194,7 +196,7 @@ class TestIntersect(unittest.TestCase):
             )
             nsig = signal / np.linalg.norm(signal)
             nsig_est = signal_est / np.linalg.norm(signal_est)
-            print(nsig / nsig_est)
+            # print(nsig / nsig_est)
             corr = np.abs(np.dot(nsig, nsig_est.conj()))
             self.assertAlmostEqual(
                 corr,
@@ -228,6 +230,42 @@ class TestIntersect(unittest.TestCase):
             distance = splg.norm(diff, ord="fro")
             self.assertAlmostEqual(
                 distance, 0, msg="pMRA M-matrix constructions differ."
+            )
+
+    def test_dMRA_psuedoinverse(self):
+        for dim in self.M_matrix_test_dims:
+            real_signal = self.rng.normal(size=dim)
+            coef = np.fft.fft(real_signal)
+            invars, invar_inds = rr.theoretic_dMRA_invariants(coef, 3)
+            null = rr.construct_nullspace(coef[::2], MRA_helpers.dMRA_nullspace_col_lut)
+            null /= splg.norm(null, axis=0)
+            odd_lift = np.squeeze(poly.symmetric_lift(coef[1::2, None], 2))
+            part_sol1 = odd_lift - null @ (null.conjugate().T @ odd_lift)
+            part_sol2 = rr.get_particular_solution(coef[::2], invars, invar_inds)
+            # print("Sol1", part_sol1)
+            # print("Sol2", part_sol2)
+            # print("Ratio", part_sol2 / part_sol1)
+            self.assertTrue(
+                np.allclose(part_sol1, part_sol2),
+                msg="Psuedoinverse construction is incorrect.",
+            )
+
+    def test_pMRA_psuedoinverse(self):
+        for dim in self.M_matrix_test_dims:
+            real_signal = self.rng.normal(size=dim)
+            coef = np.fft.fft(real_signal)
+            invars, invar_inds = rr.theoretic_pMRA_invariants(coef, 3)
+            null = rr.construct_nullspace(coef[::2], MRA_helpers.pMRA_nullspace_col_lut)
+            null /= splg.norm(null, axis=0)
+            odd_lift = np.squeeze(poly.symmetric_lift(coef[1::2, None], 2))
+            part_sol1 = odd_lift - null @ (null.conjugate().T @ odd_lift)
+            part_sol2 = rr.get_particular_solution(coef[::2], invars, invar_inds)
+            # print("Sol1", part_sol1)
+            # print("Sol2", part_sol2)
+            # print("Ratio", part_sol2 / part_sol1)
+            self.assertTrue(
+                np.allclose(part_sol1, part_sol2),
+                msg="Psuedoinverse construction is incorrect.",
             )
 
 

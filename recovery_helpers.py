@@ -25,13 +25,6 @@ def kernel_recovery_matrix_for(basis):
     return poly.sym_matrix_minors_subspace(dim) @ poly.symmetric_lift(basis, 2)
 
 
-def is_close_orthonormal(arr):
-    gram = arr.conj().T @ arr
-    gram_vec = gram.toarray().flatten()
-    Ivec = np.identity(gram.shape[0]).flatten()
-    print("Is orthonormal? ", np.allclose(gram_vec, Ivec))
-
-
 def top_vector_recovery_matrix_for(ortho_basis):
     dim = get_base_dimension(ortho_basis.shape[0])
     ortho_lift, w_left, w_right = orthonormal_lift(ortho_basis, 2)
@@ -42,16 +35,18 @@ def top_vector_recovery_matrix_for(ortho_basis):
     return rec_mat, w_left, w_right
 
 
-def round_sym_to_rank1(ut_vals, matrix_dim, preserve_energy=False):
+def round_sym_to_rank1(ut_vals, matrix_dim):
     mat = np.zeros((matrix_dim, matrix_dim), dtype=ut_vals.dtype)
     rows, cols = np.triu_indices_from(mat)
     mat[rows, cols] = ut_vals
     mat[cols, rows] = ut_vals
     vals, vecs = np.linalg.eig(mat)
     max_loc = np.argmax(np.abs(vals))
-    weight = (
-        np.linalg.norm(mat, ord="fro")
-        if preserve_energy
-        else np.sqrt(np.abs(vals[max_loc]))
-    )
-    return weight * vecs[:, max_loc], vals
+    # weight = np.sqrt(np.linalg.norm(mat, ord="fro"))
+    max_vec = vecs[:, max_loc]
+    mat_norm = np.linalg.norm(mat, ord="fro")
+    phase = 1
+    if ut_vals.dtype == complex:
+        phase_sq = max_vec.conj() @ (mat / mat_norm @ max_vec.conj())
+        phase = np.sqrt(phase_sq)
+    return phase * np.sqrt(mat_norm) * max_vec, vals
