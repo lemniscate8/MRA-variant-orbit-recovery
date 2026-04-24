@@ -1,7 +1,8 @@
 import numpy as np
 import itertools as it
 import scipy.sparse as sparse
-import scipy.sparse.linalg as splg
+
+# import scipy.sparse.linalg as splg
 from scipy.special import comb, factorial
 
 
@@ -17,12 +18,12 @@ def symmetric_lift(basis, k):
         lifted_basis = np.zeros(shape=(lrow, lcol), dtype=basis.dtype)
     row_iter = np.fromiter(
         it.combinations_with_replacement(range(nrow), k),
-        dtype=np.dtype((int, k)),
+        dtype=np.dtype((np.int64, k)),
         count=lrow,
     )
     col_iter = np.fromiter(
         it.combinations_with_replacement(range(ncol), k),
-        dtype=np.dtype((int, k)),
+        dtype=np.dtype((np.int64, k)),
         count=lcol,
     )
     for perm in it.permutations(range(k)):
@@ -31,7 +32,6 @@ def symmetric_lift(basis, k):
             row_col_selection = basis[
                 row_iter[:, index, None], col_iter[:, perm[index]]
             ]
-
             prod = row_col_selection * prod
         lifted_basis += prod
     return lifted_basis / factorial(k)

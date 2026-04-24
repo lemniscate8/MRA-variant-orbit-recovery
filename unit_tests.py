@@ -242,30 +242,29 @@ class TestIntersect(unittest.TestCase):
             odd_lift = np.squeeze(poly.symmetric_lift(coef[1::2, None], 2))
             part_sol1 = odd_lift - null @ (null.conjugate().T @ odd_lift)
             part_sol2 = rr.get_particular_solution(coef[::2], invars, invar_inds)
-            # print("Sol1", part_sol1)
-            # print("Sol2", part_sol2)
-            # print("Ratio", part_sol2 / part_sol1)
             self.assertTrue(
                 np.allclose(part_sol1, part_sol2),
-                msg="Psuedoinverse construction is incorrect.",
+                msg="dMRA psuedoinverse construction is incorrect.",
             )
 
     def test_pMRA_psuedoinverse(self):
         for dim in self.M_matrix_test_dims:
+            print("dim ", dim)
             real_signal = self.rng.normal(size=dim)
             coef = np.fft.fft(real_signal)
             invars, invar_inds = rr.theoretic_pMRA_invariants(coef, 3)
             null = rr.construct_nullspace(coef[::2], MRA_helpers.pMRA_nullspace_col_lut)
             null /= splg.norm(null, axis=0)
             odd_lift = np.squeeze(poly.symmetric_lift(coef[1::2, None], 2))
-            part_sol1 = odd_lift - null @ (null.conjugate().T @ odd_lift)
+            part_sol1 = odd_lift - null @ (null.T.conj() @ odd_lift)
             part_sol2 = rr.get_particular_solution(coef[::2], invars, invar_inds)
-            # print("Sol1", part_sol1)
-            # print("Sol2", part_sol2)
-            # print("Ratio", part_sol2 / part_sol1)
+            ratio = part_sol1 / part_sol2
+            print(part_sol1.shape)
+            print(part_sol2.shape)
+            print(ratio)
             self.assertTrue(
                 np.allclose(part_sol1, part_sol2),
-                msg="Psuedoinverse construction is incorrect.",
+                msg="pMRA psuedoinverse construction is incorrect.",
             )
 
 
