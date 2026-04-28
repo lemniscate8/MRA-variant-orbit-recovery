@@ -72,23 +72,71 @@ def construct_M_matrix(signal, col_map_method):
 
 if __name__ == "__main__":
     rng = np.random.default_rng(0)
-    dMRA_dims = [8, 16, 32]
+    num_samples = 50**2
+    z_score = 2.576  # For a 99% confidence interval
+    dMRA_dims = [4, 8, 16]
     print("---------- dMRA cases ----------")
     for dim in dMRA_dims:
+        samples = np.zeros(num_samples)
         print("Dim:", dim)
-        real_signal = rng.normal(size=(dim))
-        signal = np.fft.fft(real_signal)
-        M_matrix = construct_M_matrix(signal, dMRA_nullspace_col_lut)
+        count = 0
+        while count < num_samples:
+            real_signal = rng.normal(size=(2 * dim))
+            signal = np.fft.fft(real_signal)
+            M_matrix = construct_M_matrix(signal, dMRA_nullspace_col_lut)
+            # Finding eigenvalues with sigma=0 puts method in shift-invert mode
+            # so we find the smallest eigenvalues
+            gram = M_matrix.T.conjugate() @ M_matrix
+            val, vec = splg.eigsh(
+                gram,
+                k=1,
+                which="LM",
+                sigma=0,
+                return_eigenvectors=True,
+                maxiter=10000,
+                tol=0,
+                ncv=min(5, gram.shape[0]),
+            )
+            mvec = gram @ vec
+            converged = np.allclose(mvec / vec, val)
+            if converged:
+                samples[count] = np.sqrt(val[0])
+                count += 1
+        mean = np.mean(samples)
+        pm_val = z_score * np.std(samples) / np.sqrt(num_samples)
         print("\tM-shape:", M_matrix.shape)
-        print("\tM-rank:", np.linalg.matrix_rank(M_matrix.toarray()))
+        print("\tSmallest singular value: ", mean, "±", pm_val)
 
-    pMRA_dims = [8, 16, 32]
+    pMRA_dims = [4, 8, 16]
     print("\n---------- pMRA cases ----------")
     for dim in pMRA_dims:
+        samples = np.zeros(num_samples)
         print("Dim:", dim)
-        real_signal = rng.normal(size=(dim))
-        signal = np.fft.fft(real_signal)
-        signal[dim // 2] = 1
-        M_matrix = construct_M_matrix(signal, pMRA_nullspace_col_lut)
+        count = 0
+        while count < num_samples:
+            real_signal = rng.normal(size=(2 * dim))
+            signal = np.fft.fft(real_signal)
+            signal[dim // 2] = 1
+            M_matrix = construct_M_matrix(signal, pMRA_nullspace_col_lut)
+            # Finding eigenvalues with sigma=0 puts method in shift-invert mode
+            # so we find the smallest eigenvalues
+            gram = M_matrix.T.conjugate() @ M_matrix
+            val, vec = splg.eigsh(
+                gram,
+                k=1,
+                which="LM",
+                sigma=0,
+                return_eigenvectors=True,
+                maxiter=10000,
+                tol=0,
+                ncv=min(5, gram.shape[0]),
+            )
+            mvec = gram @ vec
+            converged = np.allclose(mvec / vec, val)
+            if converged:
+                samples[count] = np.sqrt(val[0])
+                count += 1
+        mean = np.mean(samples)
+        pm_val = z_score * np.std(samples) / np.sqrt(num_samples)
         print("\tM-shape:", M_matrix.shape)
-        print("\tM-rank:", np.linalg.matrix_rank(M_matrix.toarray()))
+        print("\tSmallest singular value: ", mean, "±", pm_val)

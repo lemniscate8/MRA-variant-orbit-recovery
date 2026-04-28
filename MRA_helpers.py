@@ -88,6 +88,9 @@ def non_zero_pMRA_invariants(tensor_dim, k):
     return sel, tensor_inds[sel, :], signs[sel, :]
 
 
+# Determine the appropriate rescaling and phase shifts to turn invariants
+# from the 3rd order pMRA tensor into ones found in the 3rd order dMRA tensor
+# (see Lemma 52)
 def pMRA_invariants_to_dMRA(dMRA_dim):
     pMRA_dim = dMRA_dim // 2
     lut = {}
@@ -106,7 +109,7 @@ def pMRA_invariants_to_dMRA(dMRA_dim):
     weights = np.ones_like(num_zeros) * 2
     weights[num_zeros == 3] = 8
     weights[num_zeros == 1] = 4
-    phase_adjust = np.sum(pMRA_inds * ((signs - 1) // 2), axis=1) % dMRA_dim
+    phase_adjust = np.sum(-pMRA_inds * ((1 - signs) // 2), axis=1) % dMRA_dim
 
     return (
         np.array(reorder),
@@ -115,44 +118,3 @@ def pMRA_invariants_to_dMRA(dMRA_dim):
         no_nyq_dMRA_inds,
         sel,
     )
-
-
-# def dMRA_tensor_index_translator(dim, k, condition=None):
-#     table = {}
-#     index = 0
-#     for tup in it.combinations_with_replacement(range(dim), k):
-#         if np.sum(tup) % dim == 0 and (condition is not None and condition(tup)):
-#             table[tup] = index
-#             table[index] = tup
-#             index += 1
-#     return table
-
-
-# def dMRA_index_to_order(dim, k, condition=None):
-#     table = {}
-#     order = 0
-#     for tup in it.combinations_with_replacement(range(dim), k):
-#         if np.sum(tup) % dim == 0 and (condition is not None and condition(tup)):
-#             table[tup] = order
-#             order += 1
-#     return table
-
-
-# def dMRA_order_to_index(dim, k, condition=None):
-#     return {value: key for key, value in dMRA_index_to_order(dim, k, condition=None)}
-
-
-# def dMRA_tensor_index_array(dim, k, condition=None):
-#     return np.fromiter(
-#         filter(
-#             lambda inds: ((np.sum(inds) % dim) == 0)
-#             and ((condition is None) or condition(inds)),
-#             it.combinations_with_replacement(range(dim), k),
-#         ),
-#         dtype=(np.uint, k),
-#     )
-
-# def pMRA_conversion(dim, k):
-if __name__ == "__main__":
-    np.zeros(4)
-    print(np.zeros(4).dtype)

@@ -2,6 +2,7 @@ import json
 import numpy as np
 from scipy.special import comb
 import polynomials as poly
+import MRA_helpers
 
 
 # Computes the symmetric dMRA moment tensor in the Fourier basis
