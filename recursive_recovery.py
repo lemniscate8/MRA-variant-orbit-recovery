@@ -83,22 +83,25 @@ def construct_M_matrix_alt(coef, col_map_method):
 
 
 # Subroutine to extract a particular solution in either the dMRA or pMRA case
-def get_particular_solution(even_coefs, invars, invar_inds):
+def get_particular_solution(even_coefs, invariants):
     row_lut = {}
-    for ind, row in enumerate(invar_inds):
-        row_lut[tuple(row)] = ind
+    invars = []
+    for ind, (row, val) in enumerate(invariants.items()):
+        row_lut[row] = ind
+        invars.append(val)
+    invar_vec = np.array(invars, dtype=even_coefs.dtype)
     psuedo = construct_psuedoinverse(even_coefs, row_lut)
-    proj = psuedo @ invars
+    proj = psuedo @ invar_vec
     return proj
 
 
 # Subroutine that recovers odd Fourier coefficients from the even ones and
 # 3rd order dMRA invariants or pMRA invariants
-def recover_odd_coefs(even_coefs, invars, invar_inds, null_lut, verbose=False):
+def recover_odd_coefs(even_coefs, invariants, null_lut, verbose=False):
     dim = even_coefs.size
     if verbose:
         print("Recovering odd coefficients at dimension ", 2 * dim)
-    x_p = get_particular_solution(even_coefs, invars, invar_inds)
+    x_p = get_particular_solution(even_coefs, invariants)
     x_p_norm = np.linalg.norm(x_p)
     x_p /= x_p_norm
     null = construct_nullspace(even_coefs, null_lut)
@@ -126,7 +129,7 @@ def recover_odd_coefs(even_coefs, invars, invar_inds, null_lut, verbose=False):
         abs_vals2 = np.abs(eigvals2)
         sel = np.argpartition(abs_vals2, -num_vecs)[(-num_vecs):]
         print("Planted matrix eigenvalues (largest 5):\n", eigvals2[sel])
-    return odd_coefs
+    return odd_coefs, np.max(s)
 
 
 # A method that computes the dMRA invariants in the fourier basis
@@ -149,35 +152,32 @@ def theoretic_pMRA_invariants(fourier_signal, k):
     return np.real(np.prod(fourier_signal[indices], axis=1)), indices
 
 
-# Computes the pMRA moment tensor in a compressed format and in the Fourier
-# basis
-def computed_pMRA_moment(real_signal, k):
-    dim = real_signal.size
-    moment = np.zeros(comb(dim + k - 1, k, exact=True), dtype=complex)
-    for ell in range(dim):
-        rolled = np.roll(real_signal, ell)
-        sym_proj = rolled + np.flip(rolled)
-        fproj = np.fft.fft(sym_proj)
-        moment += np.squeeze(poly.symmetric_lift(fproj[:, None], k))
-    moment /= dim
-    return moment
-
-
 def recursive_recover(
-    dim, invars, invar_inds, null_lut, base_case_dim, base_case_method, verbose=False
+    dim,
+    invariants,
+    null_lut,
+    base_case_dim,
+    base_case_method,
+    forward_tol=1e-8,
+    verbose=False,
 ):
-    even_coefs = np.zeros(dim // 2, dtype=complex)
-    sel = np.all((invar_inds % 2) == 0, axis=1)
-    even_invars = invars[sel]
-    even_invar_inds = invar_inds[sel, :] // 2
+    # even_coefs = np.zeros(dim // 2, dtype=complex)
+    # sel = ((invar_inds % 2) == 0).all(axis=1)
+    # even_invars = invars[sel]
+    # even_invar_inds = invar_inds[sel, :] // 2
+    even_invariants = {
+        tuple(t // 2 for t in key): value
+        for key, value in invariants.items()
+        if (np.array(key) % 2 == 0).all()
+    }
     if dim // 2 > base_case_dim:
-        even_coefs[:] = recursive_recover(
+        even_coefs = recursive_recover(
             dim // 2,
-            even_invars,
-            even_invar_inds,
+            even_invariants,
             null_lut,
             base_case_dim,
             base_case_method,
+            forward_tol=forward_tol,
             verbose=verbose,
         )
     else:
@@ -187,18 +187,38 @@ def recursive_recover(
                     dim // 2, base_case_method.__name__
                 )
             )
-        even_coefs[:] = base_case_method(even_invars, even_invar_inds)
-        print(even_coefs)
 
-    if verbose:
-        print("Solving level ", dim)
-    odd_coefs = recover_odd_coefs(
-        even_coefs, invars, invar_inds, null_lut, verbose=verbose
-    )
-    all_coefs = np.zeros(dim, dtype=complex)
-    all_coefs[::2] = even_coefs
-    all_coefs[1::2] = odd_coefs
-    return all_coefs
+        even_coefs = base_case_method(even_invariants)
+    if even_coefs.ndim == 2:
+        num_sol = even_coefs.shape[1]
+        corrs = np.zeros(num_sol)
+        all_coefs = np.zeros((dim, num_sol), dtype=complex)
+        all_coefs[::2, :] = even_coefs
+        if verbose:
+            print("Found ", num_sol, " solutions in dimension ", dim // 2)
+            print(even_coefs.shape)
+        for s in range(num_sol):
+            if verbose:
+                print("Extending solution ", s)
+            odd_coefs, corr = recover_odd_coefs(
+                even_coefs[:, s], invariants, null_lut, verbose=verbose
+            )
+            all_coefs[1::2, s] = odd_coefs
+            corrs[s] = corr
+        sel = (1 - corrs) < forward_tol
+        if not sel.any():
+            if verbose:
+                print("No solutions can be extended. Picking best.")
+            sel = np.argmax(corrs)
+        return np.squeeze(all_coefs[:, sel])
+    else:
+        odd_coefs, s = recover_odd_coefs(
+            even_coefs, invariants, null_lut, verbose=verbose
+        )
+        all_coefs = np.zeros(dim, dtype=complex)
+        all_coefs[::2] = even_coefs
+        all_coefs[1::2] = odd_coefs
+        return all_coefs
 
 
 # Compute the cyclic invariant distance from signals in the Fourier basis
@@ -230,33 +250,26 @@ def dihedral_invariant_distance(f_signal1, f_signal2):
 # A method using the computations from Lemma 52 to get the same invariants
 # as appear in the 3rd order dMRA moment from the entries of the pMRA moment
 def normalize_3rd_order_pMRA_invariants(dim, pMRA_3rd_moment):
-    # Extract the relevant invariants which should be non-zero
-    pMRA_select, pMRA_invar_inds, _ = mh.non_zero_pMRA_invariants(dim // 2, 3)
-    nonzero_pMRA_invars = pMRA_3rd_moment[pMRA_select]
-
     # Reweight pMRA invariants to get equivalent dMRA ones
     reordering, weights, phase_shifts, pMRA_invar_inds, _ = mh.pMRA_invariants_to_dMRA(
         dim
     )
-
-    phases = np.exp(2j * np.pi * phase_shifts / signal_dim)
-    normalized_pMRA_invars = (phases * nonzero_pMRA_invars / weights)[reordering]
+    phases = np.exp(2j * np.pi * phase_shifts / dim)
+    normalized_pMRA_invars = (phases * pMRA_3rd_moment / weights)[reordering]
     return normalized_pMRA_invars, pMRA_invar_inds
 
 
-# Frequency marching for dihedral MRA in down at 4 dimensions
-# The 5 invariants should correspond to indices
-# [[0 0 0]
-#  [0 1 3]
-#  [0 2 2]
-#  [1 1 2]
-#  [2 3 3]]
-def dMRA_frequency_march_base_case(invars, invar_inds):
-    x0 = np.cbrt(np.abs(invars[0]))
-    print("x0: ", x0)
-    x1_mag_sq = np.abs(invars[1] / x0)
-    x2 = np.sqrt(np.abs(invars[2] / x0))
-    x1_phase = 0.5 * np.acos(invars[3] / (x2 * x1_mag_sq))
+# Frequency marching for dihedral MRA in 4 dimensions
+# Invariants must at least contain the third moment
+def dMRA_frequency_march_base_case(invars):
+    x0_fallback = np.cbrt(np.abs(invars[(0, 0, 0)]))
+    # See if invariants contain lower orders like the means and power spectrum
+    x0 = invars.get((0,), x0_fallback)
+    x1_mag_sq_fallback = invars[(0, 1, 3)] / x0
+    x1_mag_sq = np.abs(invars.get((1, 3), x1_mag_sq_fallback))
+    x2_fallback = invars[(0, 2, 2)] / x0
+    x2 = np.sqrt(np.abs(invars.get((2, 2), x2_fallback)))
+    x1_phase = 0.5 * np.acos(np.real(invars[(1, 1, 2)]) / (x1_mag_sq * x2))
     x1 = np.sqrt(x1_mag_sq) * np.exp(1.0j * x1_phase)
     x3 = np.sqrt(x1_mag_sq) * np.exp(-1.0j * x1_phase)
     return np.array(
@@ -264,13 +277,56 @@ def dMRA_frequency_march_base_case(invars, invar_inds):
         dtype=complex,
     )
 
+# Frequency marching for projected MRA in 8 dimensions
+def pMRA_frequency_march_base_case(invars):
+    # See if invariants contain lower orders like the means and power spectrum
+    x0_fallback = np.cbrt(np.abs(invars[(0, 0, 0)]))
+    x0 = invars.get((0,), x0_fallback)
+    mags_sq = np.array(
+        [
+            np.abs(invars.get((i, 8 - i), invars[(0, i, 8 - i)] / x0))
+            for i in range(1, 4)
+        ]
+    )
+    print(mags_sq)
+    tensor_inds = [(1, 1, 6), (1, 2, 5), (2, 3, 3)]
+    ind_arr = 4 - np.abs(4 - np.array(tensor_inds)) - 1
+    # print("Index array")
+    # print(ind_arr)
+    tensor_vals = np.array([invars[key] for key in tensor_inds])
+    # print("Mag array")
+    # print(np.sqrt(mags_sq[ind_arr]))
+
+    tensor_cosines = tensor_vals / np.sqrt(np.prod(mags_sq[ind_arr], axis=1))
+    phases = np.acos(tensor_cosines)
+    signs = 1 - 2 * ((np.arange(4) // (2 ** np.arange(3))[:, None]) % 2)
+    print(signs)
+    possible_combos = phases[:, None] * signs
+    print("Phase relations")
+    print(phases)
+    phase_combo_coefs = np.array([[2, -1, 0], [1, 1, -1], [0, 1, 2]])
+    invert_combos = np.linalg.inv(phase_combo_coefs)
+    print(phase_combo_coefs)
+    print(invert_combos)
+    phase_vals = invert_combos @ possible_combos
+    print(phase_vals)
+    solutions = np.zeros((8, 4), dtype=complex)
+    solutions[0, :] = x0
+    solutions[1:4, :] = np.exp(1.0j * phase_vals) * np.sqrt(mags_sq)[:, None]
+    solutions[7:4:-1, :] = solutions[1:4, :].conj()
+    solutions[4, :] = 1
+    print(solutions.shape)
+    print(solutions)
+    print(np.abs(solutions))
+    return solutions
+
 
 if __name__ == "__main__":
 
     inital_coefs = np.loadtxt("input/initialization.csv", dtype=complex, delimiter=",")
 
     # Return the first four Fourier coefficients as the base case
-    def oracle_base_case(invars, invar_inds):
+    def oracle_base_case(invariants):
         return inital_coefs
 
     # Assume that the dimension is 64
@@ -280,16 +336,16 @@ if __name__ == "__main__":
     dMRA_moment = np.loadtxt("input/dMRA_3rd_moment.csv", dtype=complex, delimiter=",")
 
     # Compress the invariants by omitting the values assumed to be zero
-    dMRA_select, dMRA_invar_inds = mh.non_zero_dMRA_invariants(signal_dim, 3)
-    print("Number of non-zero dMRA invariants: ", np.sum(dMRA_select))
-    nonzero_dMRA_invars = dMRA_moment[dMRA_select]
+    _, dMRA_invar_inds = mh.non_zero_dMRA_invariants(signal_dim, 3)
+    dMRA_invariants = {
+        tuple(row.tolist()): value for row, value in zip(dMRA_invar_inds, dMRA_moment)
+    }
 
     # Run the recovery algorithm for the dMRA invariants
     print("----- Starting recovery for dMRA model -----")
     recovered_signal_dMRA = recursive_recover(
         signal_dim,
-        nonzero_dMRA_invars,
-        dMRA_invar_inds,
+        dMRA_invariants,
         mh.dMRA_nullspace_col_lut,
         4,
         dMRA_frequency_march_base_case,
@@ -300,24 +356,41 @@ if __name__ == "__main__":
     pMRA_moment = np.loadtxt("input/pMRA_3rd_moment.csv", dtype=complex, delimiter=",")
 
     # Use Lemma 52 to remove pesky phase factors and weights from projection step
-    normalized_pMRA_invars, pMRA_invar_inds = normalize_3rd_order_pMRA_invariants(
+    normalized_pMRA_moment, pMRA_invar_inds = normalize_3rd_order_pMRA_invariants(
         signal_dim, pMRA_moment
     )
-
-    print("----- Starting recovery for pMRA model -----")
-    recovered_signal_pMRA = recursive_recover(
-        signal_dim,
-        normalized_pMRA_invars,
-        pMRA_invar_inds,
-        mh.pMRA_nullspace_col_lut,
-        4,
-        oracle_base_case,
-        verbose=True,
-    )
+    pMRA_invariants = {
+        tuple(row.tolist()): value
+        for row, value in zip(pMRA_invar_inds, normalized_pMRA_moment)
+    }
 
     # Load the true signal
     true_fourier = np.loadtxt(
         "solution/true_fourier_coefficients.csv", dtype=complex, delimiter=","
+    )
+
+    pesky = np.angle(true_fourier[::8])[1:4]
+    print("Angles should be")
+    print(pesky)
+    phase_combo_coefs = np.array([[2, -1, 0], [1, 1, -1], [0, 1, 2]])
+    combos = phase_combo_coefs @ pesky
+    print("True angle linear combos")
+    print(combos)
+    print("True angle combos mod 2pi")
+    print(np.fmod(combos + 6 * np.pi, 2 * np.pi))
+    print("Recover one of these")
+    signs = 1 - 2 * ((np.arange(4) // (2 ** np.arange(3))[:, None]) % 2)
+    rec = np.arccos(np.cos(combos)[:, None] * signs)
+    print(rec)
+
+    print("----- Starting recovery for pMRA model -----")
+    recovered_signal_pMRA = recursive_recover(
+        signal_dim,
+        pMRA_invariants,
+        mh.pMRA_nullspace_col_lut,
+        8,
+        pMRA_frequency_march_base_case,
+        verbose=True,
     )
 
     # Check how close dMRA recovery method got

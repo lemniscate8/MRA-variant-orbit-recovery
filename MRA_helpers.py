@@ -62,9 +62,9 @@ def pMRA_nullspace_col_lut(dim):
     return gamma
 
 
-def non_zero_dMRA_invariants(dim, k, condition=None):
+def non_zero_dMRA_invariants(dim, k):
     tensor_inds = np.fromiter(
-        it.combinations_with_replacement(range(dim), 3),
+        it.combinations_with_replacement(range(dim), k),
         dtype=(int, 3),
         count=comb(dim + 3 - 1, 3, exact=True),
     )

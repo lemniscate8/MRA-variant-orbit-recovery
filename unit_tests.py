@@ -1,11 +1,12 @@
 import unittest
 import numpy as np
 import scipy.sparse.linalg as splg
-import MRA_helpers
+import MRA_helpers as mh
 import polynomials as poly
 import recursive_recovery as rr
 import recovery_helpers as rec_help
 import M_matrix_validation as mmv
+import problem_generation as pg
 
 # import warnings
 
@@ -209,7 +210,7 @@ class TestIntersect(unittest.TestCase):
         for dim in self.M_matrix_test_dims:
             real_signal = self.rng.normal(size=dim)
             fourier_signal = np.fft.fft(real_signal)
-            dMRA_lut = MRA_helpers.dMRA_nullspace_col_lut
+            dMRA_lut = mh.dMRA_nullspace_col_lut
             M1 = mmv.construct_M_matrix(fourier_signal, dMRA_lut)
             M2 = rr.construct_M_matrix_alt(fourier_signal, dMRA_lut)[:, 1:]
             diff = M1 - M2
@@ -223,7 +224,7 @@ class TestIntersect(unittest.TestCase):
             real_signal = self.rng.normal(size=dim)
             fourier_signal = np.fft.fft(real_signal)
             fourier_signal[dim // 2] = 1
-            pMRA_lut = MRA_helpers.pMRA_nullspace_col_lut
+            pMRA_lut = mh.pMRA_nullspace_col_lut
             M1 = mmv.construct_M_matrix(fourier_signal, pMRA_lut)
             M2 = rr.construct_M_matrix_alt(fourier_signal, pMRA_lut)[:, 1:]
             diff = M1 - M2
@@ -237,11 +238,14 @@ class TestIntersect(unittest.TestCase):
             real_signal = self.rng.normal(size=dim)
             coef = np.fft.fft(real_signal)
             invars, invar_inds = rr.theoretic_dMRA_invariants(coef, 3)
-            null = rr.construct_nullspace(coef[::2], MRA_helpers.dMRA_nullspace_col_lut)
+            invariants = {
+                tuple(row.tolist()): value for row, value in zip(invar_inds, invars)
+            }
+            null = rr.construct_nullspace(coef[::2], mh.dMRA_nullspace_col_lut)
             null /= splg.norm(null, axis=0)
             odd_lift = np.squeeze(poly.symmetric_lift(coef[1::2, None], 2))
             part_sol1 = odd_lift - null @ (null.conjugate().T @ odd_lift)
-            part_sol2 = rr.get_particular_solution(coef[::2], invars, invar_inds)
+            part_sol2 = rr.get_particular_solution(coef[::2], invariants)
             self.assertTrue(
                 np.allclose(part_sol1, part_sol2),
                 msg="dMRA psuedoinverse construction is incorrect.",
@@ -249,15 +253,17 @@ class TestIntersect(unittest.TestCase):
 
     def test_pMRA_psuedoinverse(self):
         for dim in self.M_matrix_test_dims:
-            print("dim ", dim)
             real_signal = self.rng.normal(size=dim)
             coef = np.fft.fft(real_signal)
             invars, invar_inds = rr.theoretic_pMRA_invariants(coef, 3)
-            null = rr.construct_nullspace(coef[::2], MRA_helpers.pMRA_nullspace_col_lut)
+            invariants = {
+                tuple(row.tolist()): value for row, value in zip(invar_inds, invars)
+            }
+            null = rr.construct_nullspace(coef[::2], mh.pMRA_nullspace_col_lut)
             null /= splg.norm(null, axis=0)
             odd_lift = np.squeeze(poly.symmetric_lift(coef[1::2, None], 2))
             part_sol1 = odd_lift - null @ (null.T.conj() @ odd_lift)
-            part_sol2 = rr.get_particular_solution(coef[::2], invars, invar_inds)
+            part_sol2 = rr.get_particular_solution(coef[::2], invariants)
             ratio = part_sol1 / part_sol2
             print(part_sol1.shape)
             print(part_sol2.shape)
@@ -266,6 +272,29 @@ class TestIntersect(unittest.TestCase):
                 np.allclose(part_sol1, part_sol2),
                 msg="pMRA psuedoinverse construction is incorrect.",
             )
+
+    def test_pMRA_converts_to_dMRA(self):
+        for dim in self.M_matrix_test_dims:
+            real_signal = self.rng.normal(size=dim)
+            dMRA_moment = pg.computed_dMRA_moment(real_signal, 3)
+            pMRA_moment = pg.computed_pMRA_moment(real_signal, 3)
+            _, invar_inds = mh.non_zero_dMRA_invariants(dim, 3)
+            sel = (invar_inds == dim // 2).any(axis=1)
+            dMRA_moment_no_nyq = dMRA_moment[~sel]
+            normalize_pMRA_moment, _ = rr.normalize_3rd_order_pMRA_invariants(
+                dim, pMRA_moment
+            )
+            self.assertTrue(
+                np.allclose(dMRA_moment_no_nyq, normalize_pMRA_moment),
+                msg="Normalization failed in dimension " + str(dim),
+            )
+
+    def test_pMRA_frequency_march(self):
+        real_signal = self.rng.normal(size=8)
+        pMRA_moment = pg.computed_pMRA_moment(real_signal, 3)
+        normalize_pMRA_moment, _ = rr.normalize_3rd_order_pMRA_invariants(
+            8, pMRA_moment
+        )
 
 
 if __name__ == "__main__":
