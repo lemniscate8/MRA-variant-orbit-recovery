@@ -75,10 +75,10 @@ def non_zero_dMRA_invariants(dim, k):
 def non_zero_pMRA_invariants(tensor_dim, k):
     tensor_inds = np.fromiter(
         it.combinations_with_replacement(range(tensor_dim), 3),
-        dtype=(int, 3),
-        count=comb(tensor_dim + 3 - 1, 3, exact=True),
+        dtype=(int, k),
+        count=comb(tensor_dim + k - 1, k, exact=True),
     )
-    sel = np.zeros(comb(tensor_dim + 3 - 1, 3, exact=True), dtype=bool)
+    sel = np.zeros(comb(tensor_dim + k - 1, k, exact=True), dtype=bool)
     signs = np.zeros_like(tensor_inds)
     for num in range(2 ** (k - 1)):
         sign_vec = 1 - 2 * ((num // 2 ** np.arange(k)) % 2)
@@ -118,3 +118,12 @@ def pMRA_invariants_to_dMRA(dMRA_dim):
         no_nyq_dMRA_inds,
         sel,
     )
+
+
+# Takes any number of pairs of values vectors and index arrays
+def packaged_moments(*args):
+    moment = dict()
+    for value_vector, index_array in args:
+        for row, value in zip(index_array, value_vector):
+            moment[tuple(row.tolist())] = value
+    return moment

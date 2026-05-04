@@ -16,7 +16,7 @@ def computed_dMRA_moment(real_signal, k):
         fproj_rev = np.fft.fft(np.flip(rolled))
         moment += np.prod(fproj_rev[dMRA_inds], axis=1)
     moment /= 2 * dim
-    return moment
+    return moment, dMRA_inds
 
 
 # Computes the symmetric pMRA moment tensor in the Fourier basis
@@ -31,7 +31,7 @@ def computed_pMRA_moment(real_signal, k):
         fproj = np.fft.fft(sym_proj)
         moment += np.prod(fproj[pMRA_inds], axis=1)
     moment /= dim
-    return moment
+    return moment, pMRA_inds
 
 
 if __name__ == "__main__":
@@ -55,12 +55,12 @@ if __name__ == "__main__":
         print("Saved initial 4 coefficients to '", initial_coefs_filename, "'")
 
         # Save the moments to correct locations
-        dMRA_moment = computed_dMRA_moment(real_signal, 3)
+        dMRA_moment, _ = computed_dMRA_moment(real_signal, 3)
         dMRA_moment_filename = "input/dMRA_3rd_moment.csv"
         np.savetxt(dMRA_moment_filename, dMRA_moment, delimiter=",")
         print("Saved dMRA 3rd moment to '", dMRA_moment_filename, "'")
 
-        pMRA_moment = computed_pMRA_moment(real_signal, 3)
+        pMRA_moment, _ = computed_pMRA_moment(real_signal, 3)
         pMRA_moment_filename = "input/pMRA_3rd_moment.csv"
         np.savetxt(pMRA_moment_filename, pMRA_moment, delimiter=",")
         print("Saved pMRA 3rd moment to '", pMRA_moment_filename, "'")

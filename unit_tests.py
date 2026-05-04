@@ -281,7 +281,7 @@ class TestIntersect(unittest.TestCase):
             _, invar_inds = mh.non_zero_dMRA_invariants(dim, 3)
             sel = (invar_inds == dim // 2).any(axis=1)
             dMRA_moment_no_nyq = dMRA_moment[~sel]
-            normalize_pMRA_moment, _ = rr.normalize_3rd_order_pMRA_invariants(
+            normalize_pMRA_moment, _ = rr.reweight_3rd_order_pMRA_invariants(
                 dim, pMRA_moment
             )
             self.assertTrue(
@@ -292,9 +292,7 @@ class TestIntersect(unittest.TestCase):
     def test_pMRA_frequency_march(self):
         real_signal = self.rng.normal(size=8)
         pMRA_moment = pg.computed_pMRA_moment(real_signal, 3)
-        normalize_pMRA_moment, _ = rr.normalize_3rd_order_pMRA_invariants(
-            8, pMRA_moment
-        )
+        normalize_pMRA_moment, _ = rr.reweight_3rd_order_pMRA_invariants(8, pMRA_moment)
 
 
 if __name__ == "__main__":
